@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# Default values
+prefix="feature"
+
+# Function to display the help menu
+usage() {
+  echo "Usage: create_branch_name [-p prefix] [-b] [-h]"
+  echo ""
+  echo "Options:"
+  echo "  -p, --prefix <prefix>   Specify the prefix for the branch name (default: feature)"
+  echo "  -b, --bugfix            Use 'bugfix' as the prefix for the branch name"
+  echo "  -h, --help              Display this help menu"
+  echo ""
+  echo "Examples:"
+  echo "  create_branch_name --prefix hotfix"
+  echo "  create_branch_name --bugfix"
+  echo "  echo \"### TICKET-12345 Swift 6 Feature ###\" | create_branch_name"
+  echo ""
+  echo "Example branch names:"
+  echo "  hotfix/TICKET-12345"
+  echo "  bugfix/TICKET-67890"
+  echo "  feature/TICKET-12345-swift-6-feature"
+  echo ""
+  echo "If text follows the ticket number, it will be sanitized and"
+  echo "added to the branch name (limited to 40 characters)."
+}
+
+# Parse options using getopts and support for both single (-) and double (--) dashes
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -p|--prefix)
+      prefix="$2"
+      shift 2
+      ;;
+    -b|--bugfix)
+      prefix="bugfix"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Invalid argument: $1"
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+# Get the absolute path of the current script
+script_dir=$(dirname "$0")
+
+# Check if input is provided via stdin or clipboard
+if [ ! -t 0 ]; then
+  input_string=$(cat)
+else
+  input_string=$(pbpaste)
+fi
+
+# Call the extract_ticket script to get the ticket number
+# Don't suppress errors, let them propagate
+ticket_number=$(echo "$input_string" | "$script_dir/extract_ticket")
+
+# Get the ticket prefix for use in regex patterns - we already have it from extract_ticket
+# but let's get it again to ensure consistency
+ticket_prefix=$("$script_dir/ticket_prefix")
+
+# Look for description text - use the last non-empty line that's not a ticket number
+description=""
+ticket_pattern="${ticket_prefix}-[0-9]+"
+
+# Get all non-empty lines
+all_non_empty_lines=$(echo "$input_string" | grep -v '^\s*$')
+
+# Get the last line that doesn't contain a ticket number
+last_non_ticket_line=$(echo "$all_non_empty_lines" | grep -v "$ticket_pattern" | tail -1 || echo "")
+if [ -n "$last_non_ticket_line" ]; then
+  description="$last_non_ticket_line"
+else
+  # If all lines contain ticket numbers, use the last line but remove the ticket number
+  last_line=$(echo "$all_non_empty_lines" | tail -1)
+  description=$(echo "$last_line" | sed -E "s/$ticket_pattern//g")
+fi
+
+# Remove the ticket number from the description if it's present
+description=$(echo "$description" | sed -E "s/$ticket_pattern//g")
+
+# Clean up the description for branch name
+if [ -n "$description" ]; then
+  # First lowercase everything
+  description=$(echo "$description" | tr '[:upper:]' '[:lower:]')
+  
+  # Replace all special characters and spaces with hyphens
+  # This includes: all punctuation, symbols, and whitespace
+  description=$(echo "$description" | sed 's/[^a-z0-9]/-/g')
+  
+  # Limit to 40 characters
+  if [ ${#description} -gt 0 ]; then
+    # Add leading hyphen
+    description="-${description:0:40}"
+    # Remove trailing hyphens
+    description=$(echo "$description" | sed 's/-*$//')
+    # Replace multiple hyphens with a single hyphen
+    description=$(echo "$description" | sed 's/-\{2,\}/-/g')
+  fi
+fi
+
+# Construct the branch name
+branch_name="$prefix/$ticket_number$description"
+
+# Output the branch name
+echo "$branch_name"

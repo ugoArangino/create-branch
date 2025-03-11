@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# Config file path
+config_file="$HOME/.ticket.config"
+current_dir=$(pwd)
+
+# No default prefix - user must register one
+
+# Function to display help
+usage() {
+  echo "Usage: ticket_prefix [-r prefix] [-h]"
+  echo ""
+  echo "Options:"
+  echo "  -r, --register <prefix>  Register a prefix for the current directory"
+  echo "  -h, --help               Display this help message"
+  echo ""
+  echo "Examples:"
+  echo "  ticket_prefix            # Print the current ticket prefix"
+  echo "  ticket_prefix -r TICKET  # Register TICKET as prefix for current directory"
+  echo ""
+  echo "Configuration is stored in ~/.ticket.config in JSON format."
+}
+
+# Function to ensure config file exists with proper structure
+ensure_config() {
+  if [ ! -f "$config_file" ]; then
+    echo '{
+  "ticket-prefix": {}
+}' > "$config_file"
+  elif ! jq . "$config_file" > /dev/null 2>&1; then
+    echo "Error: $config_file is not valid JSON" >&2
+    exit 1
+  elif [ "$(jq 'has("ticket-prefix")' "$config_file")" != "true" ]; then
+    # Add ticket-prefix object if it doesn't exist
+    jq '. + {"ticket-prefix": {}}' "$config_file" > "${config_file}.tmp" && \
+    mv "${config_file}.tmp" "$config_file"
+  fi
+}
+
+# Register a prefix for the current directory
+register_prefix() {
+  local prefix="$1"
+  
+  # Ensure jq is available
+  if ! command -v jq &> /dev/null; then
+    echo "Error: jq is required for registering prefixes" >&2
+    exit 1
+  fi
+  
+  ensure_config
+  
+  # Update the config file with the new prefix
+  jq --arg dir "$current_dir" --arg prefix "$prefix" \
+    '.["ticket-prefix"][$dir] = $prefix' "$config_file" > "${config_file}.tmp" && \
+    mv "${config_file}.tmp" "$config_file"
+  
+  echo "Registered ticket prefix '$prefix' for directory: $current_dir"
+}
+
+# Get the current ticket prefix
+get_ticket_prefix() {
+  # Ensure config file exists
+  if [ ! -f "$config_file" ]; then
+    ensure_config
+  fi
+  
+  # Use jq if available
+  if command -v jq &> /dev/null; then
+    # Check current directory
+    prefix_config=$(jq -r --arg dir "$current_dir" '.["ticket-prefix"][$dir] // empty' "$config_file" 2>/dev/null)
+    
+    # If found, return it
+    if [ -n "$prefix_config" ]; then
+      echo "$prefix_config"
+      return
+    fi
+    
+    # Try parent directories
+    parent_dir="$current_dir"
+    while [ "$parent_dir" != "/" ]; do
+      parent_dir=$(dirname "$parent_dir")
+      prefix_config=$(jq -r --arg dir "$parent_dir" '.["ticket-prefix"][$dir] // empty' "$config_file" 2>/dev/null)
+      if [ -n "$prefix_config" ]; then
+        echo "$prefix_config"
+        return
+      fi
+    done
+  fi
+  
+  # No default fallback - prompt user to register a prefix
+  echo "No ticket prefix configured. Please register one with: ticket_prefix -r PREFIX"
+  exit 1
+}
+
+# Parse command line options
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -r|--register)
+      if [ -z "${2:-}" ]; then
+        echo "Error: No prefix specified" >&2
+        usage
+        exit 1
+      fi
+      register_prefix "$2"
+      exit 0
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+# No arguments - print the current prefix
+get_ticket_prefix

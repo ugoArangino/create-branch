@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# Get the absolute path of the current script
+script_dir=$(dirname "$0")
+
+# Get ticket prefix using the ticket_prefix script
+if ! ticket_prefix=$("$script_dir/ticket_prefix" 2>&1); then
+  echo "Error: No ticket prefix configured. Please register one with: ticket_prefix -r PREFIX" >&2
+  exit 1
+fi
+
+# Check if input is provided as the first argument
+if [ -n "${1:-}" ]; then
+  input_string="$1"
+# If not, check if input is provided via stdin
+elif [ ! -t 0 ]; then
+  input_string=$(cat)
+# If no stdin or argument, use clipboard input via pbpaste
+else
+  input_string=$(pbpaste)
+fi
+
+# Extract the first ticket number using the configured prefix
+if [[ "$input_string" =~ ($ticket_prefix-[0-9]+) ]]; then
+  # Only use the first match
+  ticket_number="${BASH_REMATCH[1]}"
+  echo "$ticket_number"
+else
+  # No ticket number found
+  echo "Error: No ticket number found in the input. Expected format: $ticket_prefix-XXXXX" >&2
+  exit 1
+fi

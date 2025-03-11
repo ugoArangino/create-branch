@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# Default values
+develop_first=false
+
+# Function to display the help menu
+usage() {
+  echo "Usage: create_branch [branch_name_options] [-d] [-h]"
+  echo ""
+  echo "Options:"
+  echo "  -p, --prefix <prefix>   Specify the prefix for the branch name (default: feature)"
+  echo "  -b, --bugfix            Use 'bugfix' as the prefix for the branch name"
+  echo "  -d, --develop           Create branch from origin/develop instead of current HEAD"
+  echo "  -h, --help              Display this help menu"
+  echo ""
+  echo "Examples:"
+  echo "  create_branch --prefix hotfix"
+  echo "  create_branch --bugfix"
+  echo "  echo \"### TICKET-12345 ###\" | create_branch --develop"
+  echo "  create_branch --develop"
+  echo ""
+  echo "This script uses create_branch_name to generate the branch name and then"
+  echo "creates or checks out that branch."
+}
+
+# Parse arguments for this script
+branch_name_args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -d|--develop)
+      develop_first=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      # Pass all other arguments to create_branch_name
+      branch_name_args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# Get the absolute path of the current script
+script_dir=$(dirname "$0")
+
+# Check if there is input on stdin
+if [ ! -t 0 ]; then
+  # If stdin is not a terminal, pass it to create_branch_name
+  if [ ${#branch_name_args[@]} -eq 0 ]; then
+    branch_name=$(cat | "$script_dir/create_branch_name" 2>&1) || { 
+      error_msg=$?
+      # Check if the error message contains specific strings
+      if echo "$branch_name" | grep -q "No ticket prefix configured"; then
+        echo "ERROR: No ticket prefix configured. Please register one with: ticket_prefix -r PREFIX"
+      elif echo "$branch_name" | grep -q "No ticket number found"; then
+        echo "ERROR: No ticket number found in clipboard or input. Please copy a string containing a ticket number."
+      else
+        echo "ERROR: $branch_name"
+      fi
+      exit 1
+    }
+  else
+    branch_name=$(cat | "$script_dir/create_branch_name" "${branch_name_args[@]}" 2>&1) || {
+      error_msg=$?
+      # Check if the error message contains specific strings
+      if echo "$branch_name" | grep -q "No ticket prefix configured"; then
+        echo "ERROR: No ticket prefix configured. Please register one with: ticket_prefix -r PREFIX"
+      elif echo "$branch_name" | grep -q "No ticket number found"; then
+        echo "ERROR: No ticket number found in clipboard or input. Please copy a string containing a ticket number."
+      else
+        echo "ERROR: $branch_name"
+      fi
+      exit 1
+    }
+  fi
+else
+  # Otherwise just call create_branch_name with the arguments
+  if [ ${#branch_name_args[@]} -eq 0 ]; then
+    branch_name=$("$script_dir/create_branch_name" 2>&1) || {
+      error_msg=$?
+      # Check if the error message contains specific strings
+      if echo "$branch_name" | grep -q "No ticket prefix configured"; then
+        echo "ERROR: No ticket prefix configured. Please register one with: ticket_prefix -r PREFIX"
+      elif echo "$branch_name" | grep -q "No ticket number found"; then
+        echo "ERROR: No ticket number found in clipboard or input. Please copy a string containing a ticket number."
+      else
+        echo "ERROR: $branch_name"
+      fi
+      exit 1
+    }
+  else
+    branch_name=$("$script_dir/create_branch_name" "${branch_name_args[@]}" 2>&1) || {
+      error_msg=$?
+      # Check if the error message contains specific strings
+      if echo "$branch_name" | grep -q "No ticket prefix configured"; then
+        echo "ERROR: No ticket prefix configured. Please register one with: ticket_prefix -r PREFIX"
+      elif echo "$branch_name" | grep -q "No ticket number found"; then
+        echo "ERROR: No ticket number found in clipboard or input. Please copy a string containing a ticket number."
+      else
+        echo "ERROR: $branch_name"
+      fi
+      exit 1
+    }
+  fi
+fi
+
+# Check if branch_name was generated successfully
+if [ -z "${branch_name:-}" ]; then
+  echo "ERROR: Failed to generate branch name."
+  exit 1
+fi
+
+# Fetch latest from origin
+if [ "$develop_first" = true ]; then
+  echo "Fetching latest changes from origin..."
+  git fetch origin
+fi
+
+# Check if the branch already exists
+if git show-ref --verify --quiet "refs/heads/$branch_name"; then
+  echo "Branch already exists. Checking out: $branch_name"
+  git checkout "$branch_name"
+else
+  if [ "$develop_first" = true ]; then
+    echo "Creating branch from origin/develop and checking out: $branch_name"
+    git checkout -b "$branch_name" origin/develop
+  else
+    echo "Creating branch from current HEAD and checking out: $branch_name"
+    git checkout -b "$branch_name"
+  fi
+fi
